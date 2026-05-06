@@ -1,0 +1,34 @@
+// 密码对话框资源定义
+// 用于 DialogBox 调用
+
+#define IDD_PASSWORD_DIALOG    100
+#define IDC_FOLDER_LABEL        101
+#define IDC_FOLDER_PATH_DISPLAY 1001
+#define IDC_PASSWORD_LABEL      102
+#define IDC_PASSWORD_INPUT      1002
+#define IDC_BROWSE_UNLOCK_BTN   1003
+#define IDOK_UNLOCK             IDOK
+#define IDCANCEL_CANCEL         IDCANCEL
+
+IDD_PASSWORD_DIALOG DIALOGEX 0, 0, 300, 150
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "SecureFolder - 解锁文件夹"
+FONT 10, "Microsoft YaHei UI"
+BEGIN
+    // 文件夹路径显示
+    LTEXT           "加密文件夹:", IDC_FOLDER_LABEL, 10, 10, 50, 12
+    LTEXT           "", IDC_FOLDER_PATH_DISPLAY, 70, 10, 220, 12, SS_SUNKEN
+
+    // 密码输入
+    LTEXT           "请输入密码:", IDC_PASSWORD_LABEL, 10, 35, 50, 12
+    EDITTEXT        IDC_PASSWORD_INPUT, 70, 35, 220, 14, ES_PASSWORD | ES_AUTOHSCROLL
+
+    // 按钮
+    DEFPUSHBUTTON   "解锁", IDOK_UNLOCK, 70, 65, 60, 25
+    PUSHBUTTON      "解锁并打开", IDC_BROWSE_UNLOCK_BTN, 140, 65, 80, 25
+    PUSHBUTTON      "取消", IDCANCEL_CANCEL, 230, 65, 60, 25
+
+    // 提示文字
+    LTEXT           "提示: 输入正确密码后，文件夹将自动解锁并恢复原状。", 0, 10, 100, 280, 20
+    LTEXT           "忘记密码将无法恢复文件，请务必记住密码！", 0, 10, 120, 280, 20
+END

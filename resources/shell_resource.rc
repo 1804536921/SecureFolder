@@ -1,0 +1,39 @@
+// SecureFolder Shell Extension Resource File
+
+#include <windows.h>
+
+// Resource IDs
+#define IDI_SHELL_ICON  102
+
+// Shell extension icon (shown in context menu)
+IDI_SHELL_ICON ICON "shell.ico"
+
+// Version information for DLL
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+FILEFLAGSMASK   0x3fL
+FILEFLAGS       0x0L
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_DLL
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "SecureFolder"
+            VALUE "FileDescription", "SecureFolder Shell Extension"
+            VALUE "FileVersion", "1.0.0"
+            VALUE "InternalName", "SecureFolderShellExt"
+            VALUE "LegalCopyright", "Copyright (C) 2024"
+            VALUE "OriginalFilename", "SecureFolderShellExt.dll"
+            VALUE "ProductName", "SecureFolder"
+            VALUE "ProductVersion", "1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END
