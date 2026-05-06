@@ -101,12 +101,20 @@ inline bool IsCLSIDFolder(const std::wstring& path) {
     return pos != std::wstring::npos && path.back() == L'}';
 }
 
-// Extract original folder name (remove CLSID)
+// Extract original folder name (remove CLSID or .securefolder extension)
 inline std::wstring ExtractOriginalName(const std::wstring& path) {
+    // First check for CLSID format: path.{CLSID}
     size_t pos = path.find(L".{");
     if (pos != std::wstring::npos) {
         return path.substr(0, pos);
     }
+
+    // Then check for .securefolder package file extension
+    size_t extPos = path.find(PACKAGE_FILE_EXTENSION);
+    if (extPos != std::wstring::npos) {
+        return path.substr(0, extPos);
+    }
+
     return path;
 }
 
@@ -178,6 +186,61 @@ inline std::wstring Utf8ToWide(const std::string& utf8) {
     std::wstring result(len - 1, 0);
     MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, result.data(), len);
     return result;
+}
+
+// Check if path is a SecureFolder package file (new format)
+inline bool IsSecureFolderPackage(const std::wstring& path) {
+    // Must be a file (not directory)
+    DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES) return false;
+    if (attr & FILE_ATTRIBUTE_DIRECTORY) return false;
+
+    // Check extension
+    std::filesystem::path p(path);
+    if (p.extension().wstring() != PACKAGE_FILE_EXTENSION) return false;
+
+    // Verify magic number
+    HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+
+    char magic[4] = {0};
+    DWORD bytesRead = 0;
+    bool result = ReadFile(hFile, magic, 4, &bytesRead, nullptr) &&
+                  bytesRead == 4 &&
+                  magic[0] == 'S' && magic[1] == 'F' && magic[2] == 'P' && magic[3] == 'K';
+    CloseHandle(hFile);
+    return result;
+}
+
+// Get total folder size (all files combined)
+inline uint64_t GetFolderSize(const std::wstring& folderPath) {
+    uint64_t total = 0;
+    try {
+        std::filesystem::path root(folderPath);
+        for (auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+            if (!entry.is_directory()) {
+                total += entry.file_size();
+            }
+        }
+    } catch (...) {
+        // Handle permission errors
+    }
+    return total;
+}
+
+// Ensure parent directory exists for output path
+inline bool EnsureParentDirectory(const std::wstring& filePath) {
+    try {
+        std::filesystem::path p(filePath);
+        std::filesystem::path parent = p.parent_path();
+        if (!std::filesystem::exists(parent)) {
+            return std::filesystem::create_directories(parent);
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 } // namespace Utils

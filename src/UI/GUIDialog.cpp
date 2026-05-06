@@ -17,17 +17,141 @@ std::wstring PasswordDialog::s_password;
 bool PasswordDialog::s_result = false;
 bool PasswordDialog::s_isLockMode = false;
 
+// Dialog context for window procedure
+struct DialogContext {
+    HWND hPwdEdit;
+    HWND hPwdEdit2;  // For lock dialog (confirm password)
+    std::wstring folderPath;
+    bool isLockMode;
+    bool* result;
+    std::wstring* password;
+    bool running;
+};
+
+static HWND g_hPwdEdit = nullptr;
+static HWND g_hPwdEdit2 = nullptr;
+static std::wstring g_folderPath;
+static bool g_isLockMode = false;
+static bool* g_result = nullptr;
+static std::wstring* g_password = nullptr;
+static bool g_running = true;
+static bool g_openAfterUnlock = false;
+static bool* g_openAfterUnlockPtr = nullptr;
+
 // Global variables
 static MainWindow* g_mainWindow = nullptr;
 static HINSTANCE g_hInstance = nullptr;
 
+// Dialog window procedure
+static LRESULT CALLBACK DialogWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+        case WM_COMMAND:
+        {
+            int cmd = LOWORD(wParam);
+
+            if (cmd == IDOK) {
+                // Get password
+                wchar_t buffer[256] = {0};
+                GetWindowTextW(g_hPwdEdit, buffer, 256);
+                std::wstring pwd = buffer;
+
+                if (pwd.empty()) {
+                    MessageBoxW(hWnd, L"Please enter password", L"Warning", MB_ICONWARNING);
+                    SetFocus(g_hPwdEdit);
+                    return 0;
+                }
+
+                if (g_isLockMode) {
+                    // Lock mode: check confirm password
+                    wchar_t buffer2[256] = {0};
+                    GetWindowTextW(g_hPwdEdit2, buffer2, 256);
+                    std::wstring pwd2 = buffer2;
+
+                    if (pwd != pwd2) {
+                        MessageBoxW(hWnd, L"Passwords do not match", L"Warning", MB_ICONWARNING);
+                        SetWindowTextW(g_hPwdEdit2, L"");
+                        SetFocus(g_hPwdEdit2);
+                        return 0;
+                    }
+
+                    *g_password = pwd;
+                    *g_result = true;
+                    g_running = false;
+                    DestroyWindow(hWnd);
+                } else {
+                    // Unlock mode: just return password, don't unlock here
+                    // The caller will handle the unlock operation
+                    *g_password = pwd;
+                    *g_result = true;
+                    g_running = false;
+                    DestroyWindow(hWnd);
+                }
+                return 0;
+            } else if (cmd == 1003) {
+                // Unlock and Open button: set openAfterUnlock flag
+                wchar_t buffer[256] = {0};
+                GetWindowTextW(g_hPwdEdit, buffer, 256);
+                std::wstring pwd = buffer;
+
+                if (pwd.empty()) {
+                    MessageBoxW(hWnd, L"Please enter password", L"Warning", MB_ICONWARNING);
+                    SetFocus(g_hPwdEdit);
+                    return 0;
+                }
+
+                *g_password = pwd;
+                *g_result = true;
+                g_openAfterUnlock = true;
+                if (g_openAfterUnlockPtr) *g_openAfterUnlockPtr = true;
+                g_running = false;
+                DestroyWindow(hWnd);
+                return 0;
+            } else if (cmd == IDCANCEL) {
+                g_running = false;
+                DestroyWindow(hWnd);
+                return 0;
+            }
+            break;
+        }
+
+        case WM_CLOSE:
+            g_running = false;
+            DestroyWindow(hWnd);
+            return 0;
+
+        default:
+            return DefWindowProcW(hWnd, message, wParam, lParam);
+    }
+    return 0;
+}
+
+// Register dialog window class
+static void RegisterDialogClass(HINSTANCE hInstance) {
+    WNDCLASSEXW wcex = {0};
+    wcex.cbSize = sizeof(WNDCLASSEXW);
+    wcex.style = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc = DialogWndProc;
+    wcex.cbClsExtra = 0;
+    wcex.cbWndExtra = 0;
+    wcex.hInstance = hInstance;
+    wcex.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
+    wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcex.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wcex.lpszMenuName = nullptr;
+    wcex.lpszClassName = L"SecureFolderDialog";
+    wcex.hIconSm = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
+
+    RegisterClassExW(&wcex);
+}
+
 void InitGUI(HINSTANCE hInstance) {
     g_hInstance = hInstance;
     InitCommonControls();
+    RegisterDialogClass(hInstance);
 }
 
-bool RequestPassword(const std::wstring& folderPath, std::wstring& password) {
-    return PasswordDialog::Show(nullptr, folderPath, password);
+bool RequestPassword(const std::wstring& folderPath, std::wstring& password, bool& openAfterUnlock) {
+    return PasswordDialog::Show(nullptr, folderPath, password, openAfterUnlock);
 }
 
 bool RequestPasswordForLock(const std::wstring& folderPath, std::wstring& password) {
@@ -42,10 +166,17 @@ bool PerformUnlock(const std::wstring& folderPath, const std::wstring& password)
 
 // ==================== Password Dialog ====================
 
-bool PasswordDialog::Show(HWND parent, const std::wstring& folderPath, std::wstring& outPassword) {
-    s_folderPath = folderPath;
-    s_password.clear();
-    s_result = false;
+bool PasswordDialog::Show(HWND parent, const std::wstring& folderPath, std::wstring& outPassword, bool& openAfterUnlock) {
+    // Set global context
+    g_folderPath = folderPath;
+    g_password = &outPassword;
+    g_result = &s_result;
+    g_isLockMode = false;
+    g_running = true;
+    g_hPwdEdit2 = nullptr;
+    g_openAfterUnlock = false;
+    g_openAfterUnlockPtr = &openAfterUnlock;
+    openAfterUnlock = false;  // Initialize to false
 
     // Ensure g_hInstance is set
     if (!g_hInstance) {
@@ -54,10 +185,10 @@ bool PasswordDialog::Show(HWND parent, const std::wstring& folderPath, std::wstr
     }
 
     HWND hDlg = CreateWindowExW(
-        WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
-        L"#32770",  // Dialog class
+        WS_EX_DLGMODALFRAME | WS_EX_TOPMOST | WS_EX_CONTROLPARENT,
+        L"SecureFolderDialog",  // Custom dialog class
         L"SecureFolder - Unlock Folder",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT,
         320, 180,
         parent, nullptr, g_hInstance, nullptr
@@ -70,34 +201,34 @@ bool PasswordDialog::Show(HWND parent, const std::wstring& folderPath, std::wstr
     }
 
     // Create controls
-    HWND hLabel = CreateWindowW(L"STATIC", L"Encrypted folder:", WS_VISIBLE | WS_CHILD,
-                                10, 10, 300, 20, hDlg, nullptr, g_hInstance, nullptr);
+    CreateWindowW(L"STATIC", L"Encrypted folder:", WS_VISIBLE | WS_CHILD,
+                  10, 10, 300, 20, hDlg, nullptr, g_hInstance, nullptr);
 
     std::wstring displayPath = folderPath;
     if (Utils::IsCLSIDFolder(folderPath)) {
         displayPath = Utils::ExtractOriginalName(folderPath) + L" (locked)";
     }
 
-    HWND hPath = CreateWindowW(L"STATIC", displayPath.c_str(), WS_VISIBLE | WS_CHILD | SS_SUNKEN,
-                               10, 35, 300, 25, hDlg, nullptr, g_hInstance, nullptr);
+    CreateWindowW(L"STATIC", displayPath.c_str(), WS_VISIBLE | WS_CHILD | SS_SUNKEN,
+                  10, 35, 300, 25, hDlg, nullptr, g_hInstance, nullptr);
 
-    HWND hPwdLabel = CreateWindowW(L"STATIC", L"Enter password:", WS_VISIBLE | WS_CHILD,
-                                   10, 70, 100, 20, hDlg, nullptr, g_hInstance, nullptr);
+    CreateWindowW(L"STATIC", L"Enter password:", WS_VISIBLE | WS_CHILD,
+                  10, 70, 100, 20, hDlg, nullptr, g_hInstance, nullptr);
 
-    HWND hPwdEdit = CreateWindowW(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_PASSWORD,
-                                  110, 70, 200, 25, hDlg, (HMENU)1002, g_hInstance, nullptr);
+    g_hPwdEdit = CreateWindowW(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL,
+                               110, 70, 200, 25, hDlg, (HMENU)1002, g_hInstance, nullptr);
 
-    HWND hBtnUnlock = CreateWindowW(L"BUTTON", L"Unlock", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-                                    50, 110, 80, 30, hDlg, (HMENU)IDOK, g_hInstance, nullptr);
+    CreateWindowW(L"BUTTON", L"Unlock", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | WS_TABSTOP,
+                  50, 110, 80, 30, hDlg, (HMENU)IDOK, g_hInstance, nullptr);
 
-    HWND hBtnOpen = CreateWindowW(L"BUTTON", L"Unlock & Open", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-                                  140, 110, 100, 30, hDlg, (HMENU)1003, g_hInstance, nullptr);
+    CreateWindowW(L"BUTTON", L"Unlock & Open", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP,
+                  140, 110, 100, 30, hDlg, (HMENU)1003, g_hInstance, nullptr);
 
-    HWND hBtnCancel = CreateWindowW(L"BUTTON", L"Cancel", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-                                    250, 110, 60, 30, hDlg, (HMENU)IDCANCEL, g_hInstance, nullptr);
+    CreateWindowW(L"BUTTON", L"Cancel", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP,
+                  250, 110, 60, 30, hDlg, (HMENU)IDCANCEL, g_hInstance, nullptr);
 
-    HWND hTip = CreateWindowW(L"STATIC", L"Tip: Correct password will unlock and restore folder.",
-                              WS_VISIBLE | WS_CHILD, 10, 145, 300, 20, hDlg, nullptr, g_hInstance, nullptr);
+    CreateWindowW(L"STATIC", L"Tip: Correct password will unlock and restore folder.",
+                  WS_VISIBLE | WS_CHILD, 10, 145, 300, 20, hDlg, nullptr, g_hInstance, nullptr);
 
     // Center window
     RECT rcOwner, rcDlg;
@@ -108,91 +239,28 @@ bool PasswordDialog::Show(HWND parent, const std::wstring& folderPath, std::wstr
     SetWindowPos(hDlg, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
 
     ShowWindow(hDlg, SW_SHOW);
-    SetFocus(hPwdEdit);
+    SetFocus(g_hPwdEdit);
 
-    // Message loop
+    // Message loop - simple dispatch loop
     MSG msg;
-    bool running = true;
-
-    while (running && GetMessageW(&msg, nullptr, 0, 0)) {
-        if (msg.hwnd == hDlg || IsChild(hDlg, msg.hwnd)) {
-            if (msg.message == WM_COMMAND) {
-                int cmd = LOWORD(msg.wParam);
-                if (cmd == IDOK) {
-                    // Unlock
-                    wchar_t buffer[256] = {0};
-                    GetWindowTextW(hPwdEdit, buffer, 256);
-                    s_password = buffer;
-
-                    if (s_password.empty()) {
-                        MessageBoxW(hDlg, L"Please enter password", L"Warning", MB_ICONWARNING);
-                        SetFocus(hPwdEdit);
-                        continue;
-                    }
-
-                    SecureFolderManager manager;
-                    Result result = manager.UnlockFolder(s_folderPath, s_password, nullptr);
-
-                    if (result.success) {
-                        s_result = true;
-                        MessageBoxW(hDlg, L"Folder unlocked!", L"Success", MB_ICONINFORMATION);
-                        DestroyWindow(hDlg);
-                        running = false;
-                    } else {
-                        MessageBoxW(hDlg, result.message.c_str(), L"Error", MB_ICONERROR);
-                        SetWindowTextW(hPwdEdit, L"");
-                        SetFocus(hPwdEdit);
-                    }
-                } else if (cmd == 1003) {
-                    // Unlock and open
-                    wchar_t buffer[256] = {0};
-                    GetWindowTextW(hPwdEdit, buffer, 256);
-                    s_password = buffer;
-
-                    if (s_password.empty()) {
-                        MessageBoxW(hDlg, L"Please enter password", L"Warning", MB_ICONWARNING);
-                        SetFocus(hPwdEdit);
-                        continue;
-                    }
-
-                    SecureFolderManager manager;
-                    Result result = manager.UnlockFolder(s_folderPath, s_password, nullptr);
-
-                    if (result.success) {
-                        s_result = true;
-                        std::wstring openPath = Utils::ExtractOriginalName(s_folderPath);
-                        ShellExecuteW(nullptr, L"open", openPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                        DestroyWindow(hDlg);
-                        running = false;
-                    } else {
-                        MessageBoxW(hDlg, result.message.c_str(), L"Error", MB_ICONERROR);
-                        SetWindowTextW(hPwdEdit, L"");
-                        SetFocus(hPwdEdit);
-                    }
-                } else if (cmd == IDCANCEL) {
-                    DestroyWindow(hDlg);
-                    running = false;
-                }
-            } else if (msg.message == WM_CLOSE) {
-                DestroyWindow(hDlg);
-                running = false;
-            }
+    while (g_running && GetMessageW(&msg, nullptr, 0, 0)) {
+        if (IsDialogMessageW(hDlg, &msg)) {
+            continue;  // Handle keyboard navigation
         }
-        IsDialogMessageW(hDlg, &msg);
-    }
-
-    if (s_result) {
-        outPassword = s_password;
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
     }
 
     return s_result;
 }
 
 bool PasswordDialog::ShowForLock(HWND parent, const std::wstring& folderPath, std::wstring& outPassword) {
-    s_folderPath = folderPath;
-    s_password.clear();
-    s_result = false;
-    s_isLockMode = true;
+    // Set global context
+    g_folderPath = folderPath;
+    g_password = &outPassword;
+    g_result = &s_result;
+    g_isLockMode = true;
+    g_running = true;
 
     // Ensure g_hInstance is set
     if (!g_hInstance) {
@@ -200,12 +268,11 @@ bool PasswordDialog::ShowForLock(HWND parent, const std::wstring& folderPath, st
         return false;
     }
 
-    // Create lock dialog with confirm password field
     HWND hDlg = CreateWindowExW(
-        WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
-        L"#32770",
+        WS_EX_DLGMODALFRAME | WS_EX_TOPMOST | WS_EX_CONTROLPARENT,
+        L"SecureFolderDialog",  // Custom dialog class
         L"SecureFolder - Lock Folder",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT,
         320, 220,
         parent, nullptr, g_hInstance, nullptr
@@ -218,32 +285,32 @@ bool PasswordDialog::ShowForLock(HWND parent, const std::wstring& folderPath, st
     }
 
     // Create controls
-    HWND hLabel = CreateWindowW(L"STATIC", L"Folder to lock:", WS_VISIBLE | WS_CHILD,
-                                10, 10, 300, 20, hDlg, nullptr, g_hInstance, nullptr);
+    CreateWindowW(L"STATIC", L"Folder to lock:", WS_VISIBLE | WS_CHILD,
+                  10, 10, 300, 20, hDlg, nullptr, g_hInstance, nullptr);
 
-    HWND hPath = CreateWindowW(L"STATIC", folderPath.c_str(), WS_VISIBLE | WS_CHILD | SS_SUNKEN,
-                               10, 35, 300, 25, hDlg, nullptr, g_hInstance, nullptr);
+    CreateWindowW(L"STATIC", folderPath.c_str(), WS_VISIBLE | WS_CHILD | SS_SUNKEN,
+                  10, 35, 300, 25, hDlg, nullptr, g_hInstance, nullptr);
 
-    HWND hPwdLabel = CreateWindowW(L"STATIC", L"Password:", WS_VISIBLE | WS_CHILD,
-                                   10, 70, 100, 20, hDlg, nullptr, g_hInstance, nullptr);
+    CreateWindowW(L"STATIC", L"Password:", WS_VISIBLE | WS_CHILD,
+                  10, 70, 100, 20, hDlg, nullptr, g_hInstance, nullptr);
 
-    HWND hPwdEdit = CreateWindowW(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_PASSWORD,
-                                  110, 70, 200, 25, hDlg, (HMENU)1002, g_hInstance, nullptr);
+    g_hPwdEdit = CreateWindowW(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL,
+                               110, 70, 200, 25, hDlg, (HMENU)1002, g_hInstance, nullptr);
 
-    HWND hPwdLabel2 = CreateWindowW(L"STATIC", L"Confirm:", WS_VISIBLE | WS_CHILD,
-                                    10, 100, 100, 20, hDlg, nullptr, g_hInstance, nullptr);
+    CreateWindowW(L"STATIC", L"Confirm:", WS_VISIBLE | WS_CHILD,
+                  10, 100, 100, 20, hDlg, nullptr, g_hInstance, nullptr);
 
-    HWND hPwdEdit2 = CreateWindowW(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_PASSWORD,
-                                   110, 100, 200, 25, hDlg, (HMENU)1004, g_hInstance, nullptr);
+    g_hPwdEdit2 = CreateWindowW(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL,
+                                110, 100, 200, 25, hDlg, (HMENU)1004, g_hInstance, nullptr);
 
-    HWND hBtnLock = CreateWindowW(L"BUTTON", L"Lock", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-                                  100, 140, 80, 30, hDlg, (HMENU)IDOK, g_hInstance, nullptr);
+    CreateWindowW(L"BUTTON", L"Lock", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | WS_TABSTOP,
+                  100, 140, 80, 30, hDlg, (HMENU)IDOK, g_hInstance, nullptr);
 
-    HWND hBtnCancel = CreateWindowW(L"BUTTON", L"Cancel", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-                                    190, 140, 60, 30, hDlg, (HMENU)IDCANCEL, g_hInstance, nullptr);
+    CreateWindowW(L"BUTTON", L"Cancel", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP,
+                  190, 140, 60, 30, hDlg, (HMENU)IDCANCEL, g_hInstance, nullptr);
 
-    HWND hTip = CreateWindowW(L"STATIC", L"Tip: Password will be required to unlock.",
-                              WS_VISIBLE | WS_CHILD, 10, 180, 300, 20, hDlg, nullptr, g_hInstance, nullptr);
+    CreateWindowW(L"STATIC", L"Tip: Password will be required to unlock.",
+                  WS_VISIBLE | WS_CHILD, 10, 180, 300, 20, hDlg, nullptr, g_hInstance, nullptr);
 
     // Center window
     RECT rcOwner, rcDlg;
@@ -254,57 +321,16 @@ bool PasswordDialog::ShowForLock(HWND parent, const std::wstring& folderPath, st
     SetWindowPos(hDlg, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
 
     ShowWindow(hDlg, SW_SHOW);
-    SetFocus(hPwdEdit);
+    SetFocus(g_hPwdEdit);
 
-    // Message loop
+    // Message loop - simple dispatch loop
     MSG msg;
-    bool running = true;
-
-    while (running && GetMessageW(&msg, nullptr, 0, 0)) {
-        if (msg.hwnd == hDlg || IsChild(hDlg, msg.hwnd)) {
-            if (msg.message == WM_COMMAND) {
-                int cmd = LOWORD(msg.wParam);
-                if (cmd == IDOK) {
-                    // Lock
-                    wchar_t buffer[256] = {0};
-                    wchar_t buffer2[256] = {0};
-                    GetWindowTextW(hPwdEdit, buffer, 256);
-                    GetWindowTextW(hPwdEdit2, buffer2, 256);
-                    std::wstring pwd = buffer;
-                    std::wstring pwd2 = buffer2;
-
-                    if (pwd.empty()) {
-                        MessageBoxW(hDlg, L"Please enter password", L"Warning", MB_ICONWARNING);
-                        SetFocus(hPwdEdit);
-                        continue;
-                    }
-
-                    if (pwd != pwd2) {
-                        MessageBoxW(hDlg, L"Passwords do not match", L"Warning", MB_ICONWARNING);
-                        SetWindowTextW(hPwdEdit2, L"");
-                        SetFocus(hPwdEdit2);
-                        continue;
-                    }
-
-                    s_password = pwd;
-                    s_result = true;
-                    MessageBoxW(hDlg, L"Folder will be locked with encryption.", L"Success", MB_ICONINFORMATION);
-                    DestroyWindow(hDlg);
-                    running = false;
-                } else if (cmd == IDCANCEL) {
-                    DestroyWindow(hDlg);
-                    running = false;
-                }
-            } else if (msg.message == WM_CLOSE) {
-                DestroyWindow(hDlg);
-                running = false;
-            }
+    while (g_running && GetMessageW(&msg, nullptr, 0, 0)) {
+        if (IsDialogMessageW(hDlg, &msg)) {
+            continue;  // Handle keyboard navigation
         }
-        IsDialogMessageW(hDlg, &msg);
-    }
-
-    if (s_result) {
-        outPassword = s_password;
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
     }
 
     s_isLockMode = false;
@@ -488,18 +514,47 @@ void MainWindow::OnCreate() {
 }
 
 void MainWindow::OnBrowse() {
-    wchar_t path[MAX_PATH] = {0};
+    // Use GetOpenFileName for .securefolder files or BROWSEINFO for folders
+    // First, ask user what they want to select
+    int choice = MessageBoxW(m_hWnd,
+        L"Do you want to select:\n\n"
+        L"[Yes] - A folder to encrypt\n"
+        L"[No] - A .securefolder file to decrypt\n"
+        L"[Cancel] - Cancel selection",
+        L"Select Item Type",
+        MB_YESNOCANCEL | MB_ICONQUESTION);
 
-    BROWSEINFOW bi = {0};
-    bi.hwndOwner = m_hWnd;
-    bi.lpszTitle = L"Select folder to encrypt";
-    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    if (choice == IDYES) {
+        // Select folder to encrypt
+        wchar_t path[MAX_PATH] = {0};
 
-    LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
-    if (pidl) {
-        SHGetPathFromIDListW(pidl, path);
-        SetDlgItemTextW(m_hWnd, IDC_FOLDER_PATH, path);
-        CoTaskMemFree(pidl);
+        BROWSEINFOW bi = {0};
+        bi.hwndOwner = m_hWnd;
+        bi.lpszTitle = L"Select folder to encrypt";
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+
+        LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
+        if (pidl) {
+            SHGetPathFromIDListW(pidl, path);
+            SetDlgItemTextW(m_hWnd, IDC_FOLDER_PATH, path);
+            CoTaskMemFree(pidl);
+        }
+    } else if (choice == IDNO) {
+        // Select .securefolder file to decrypt
+        OPENFILENAMEW ofn = {0};
+        wchar_t path[MAX_PATH] = {0};
+
+        ofn.lStructSize = sizeof(OPENFILENAMEW);
+        ofn.hwndOwner = m_hWnd;
+        ofn.lpstrFilter = L"SecureFolder Files (*.securefolder)\0*.securefolder\0All Files (*.*)\0*.*\0";
+        ofn.lpstrFile = path;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrTitle = L"Select encrypted file to decrypt";
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+        if (GetOpenFileNameW(&ofn)) {
+            SetDlgItemTextW(m_hWnd, IDC_FOLDER_PATH, path);
+        }
     }
 }
 

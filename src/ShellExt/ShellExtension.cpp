@@ -8,6 +8,7 @@
 #include <string>
 #include "UI/GUIDialog.h"
 #include "Common/Utils.h"
+#include "Common/Types.h"
 
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "shlwapi.lib")
@@ -112,58 +113,73 @@ STDMETHODIMP CSecureFolderShellExt::Initialize(LPCITEMIDLIST pidlFolder, IDataOb
     m_folderPath = path;
     m_isEncryptedFolder = CheckIfEncrypted(path);
 
-    if (!m_isEncryptedFolder) {
-        return E_FAIL;
-    }
+    // For non-encrypted folders, still allow the shell extension to show "Lock" option
+    // We'll check in QueryContextMenu what options to show
+    // Don't return E_FAIL here - let QueryContextMenu decide
 
     return S_OK;
 }
 
 STDMETHODIMP CSecureFolderShellExt::QueryContextMenu(HMENU hMenu, UINT indexMenu,
                                                        UINT idCmdFirst, UINT idCmdLast, UINT uFlags) {
-    if (!m_isEncryptedFolder) return E_FAIL;
-
     UINT idCmd = idCmdFirst;
 
-    InsertMenuW(hMenu, indexMenu, MF_BYPOSITION, idCmd, L"Unlock with SecureFolder");
+    if (m_isEncryptedFolder) {
+        // Show unlock options for encrypted items
+        InsertMenuW(hMenu, indexMenu, MF_BYPOSITION, idCmd, L"Unlock with SecureFolder");
+        idCmd++;
+        InsertMenuW(hMenu, indexMenu + 1, MF_BYPOSITION, idCmd, L"Unlock and Open Folder");
+        idCmd++;
+    } else {
+        // Check if it's a regular folder - show lock option
+        DWORD attr = GetFileAttributesW(m_folderPath.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+            InsertMenuW(hMenu, indexMenu, MF_BYPOSITION, idCmd, L"Lock with SecureFolder");
+            idCmd++;
+        }
+    }
 
-    idCmd++;
-    InsertMenuW(hMenu, indexMenu + 1, MF_BYPOSITION, idCmd, L"Unlock and Open Folder");
+    if (idCmd == idCmdFirst) {
+        return E_FAIL;  // No menu items added
+    }
 
-    return MAKE_HRESULT(SEVERITY_SUCCESS, 0, idCmd - idCmdFirst + 1);
+    return MAKE_HRESULT(SEVERITY_SUCCESS, 0, idCmd - idCmdFirst);
 }
 
 STDMETHODIMP CSecureFolderShellExt::InvokeCommand(LPCMINVOKECOMMANDINFO pici) {
     if (pici == nullptr) return E_INVALIDARG;
 
     int cmd = LOWORD(pici->lpVerb);
-
     std::wstring password;
 
-    switch (cmd) {
-        case 0:  // Unlock
-        {
-            if (SecureFolder::RequestPassword(m_folderPath, password)) {
+    if (m_isEncryptedFolder) {
+        // Unlock commands - unified handling
+        bool openAfterUnlock = false;
+        if (SecureFolder::RequestPassword(m_folderPath, password, openAfterUnlock)) {
+            SecureFolder::SecureFolderManager manager;
+            SecureFolder::Result result = manager.UnlockFolder(m_folderPath, password, nullptr);
+            if (result.success) {
+                MessageBoxW(pici->hwnd, result.message.c_str(), L"Success", MB_ICONINFORMATION);
+                if (openAfterUnlock) {
+                    // User clicked "Unlock and Open" - open the folder
+                    std::wstring openPath = SecureFolder::Utils::ExtractOriginalName(m_folderPath);
+                    ShellExecuteW(nullptr, L"open", openPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                }
+            } else {
+                MessageBoxW(pici->hwnd, result.message.c_str(), L"Error", MB_ICONERROR);
+            }
+        }
+        return S_OK;
+    } else {
+        // Lock command for regular folder
+        if (cmd == 0) {
+            if (SecureFolder::RequestPasswordForLock(m_folderPath, password)) {
                 SecureFolder::SecureFolderManager manager;
-                SecureFolder::Result result = manager.UnlockFolder(m_folderPath, password, nullptr);
+                SecureFolder::EncryptConfig config;
+                SecureFolder::Result result = manager.LockFolder(m_folderPath, password,
+                    SecureFolder::EncryptMode::FullEncrypt, config, nullptr);
                 if (result.success) {
                     MessageBoxW(pici->hwnd, result.message.c_str(), L"Success", MB_ICONINFORMATION);
-                } else {
-                    MessageBoxW(pici->hwnd, result.message.c_str(), L"Error", MB_ICONERROR);
-                }
-            }
-            return S_OK;
-        }
-
-        case 1:  // Unlock and open
-        {
-            if (SecureFolder::RequestPassword(m_folderPath, password)) {
-                SecureFolder::SecureFolderManager manager;
-                SecureFolder::Result result = manager.UnlockFolder(m_folderPath, password, nullptr);
-                if (result.success) {
-                    std::wstring openPath = SecureFolder::Utils::ExtractOriginalName(m_folderPath);
-                    if (openPath.empty()) openPath = m_folderPath;
-                    ShellExecuteW(nullptr, L"open", openPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                 } else {
                     MessageBoxW(pici->hwnd, result.message.c_str(), L"Error", MB_ICONERROR);
                 }
@@ -177,28 +193,39 @@ STDMETHODIMP CSecureFolderShellExt::InvokeCommand(LPCMINVOKECOMMANDINFO pici) {
 
 STDMETHODIMP CSecureFolderShellExt::GetCommandString(UINT_PTR idCmd, UINT uType,
                                                        UINT* pReserved, CHAR* pszName, UINT cchMax) {
-    switch (idCmd) {
-        case 0:
-            if (uType == GCS_HELPTEXTW) {
-                wcsncpy_s((wchar_t*)pszName, cchMax, L"Enter password to unlock folder", cchMax);
-            }
-            return S_OK;
+    if (m_isEncryptedFolder) {
+        switch (idCmd) {
+            case 0:
+                if (uType == GCS_HELPTEXTW) {
+                    wcsncpy_s((wchar_t*)pszName, cchMax, L"Enter password to unlock", cchMax);
+                }
+                return S_OK;
 
-        case 1:
-            if (uType == GCS_HELPTEXTW) {
-                wcsncpy_s((wchar_t*)pszName, cchMax, L"Unlock and open folder", cchMax);
-            }
+            case 1:
+                if (uType == GCS_HELPTEXTW) {
+                    wcsncpy_s((wchar_t*)pszName, cchMax, L"Unlock and open folder", cchMax);
+                }
+                return S_OK;
+        }
+    } else {
+        if (idCmd == 0 && uType == GCS_HELPTEXTW) {
+            wcsncpy_s((wchar_t*)pszName, cchMax, L"Encrypt and lock this folder", cchMax);
             return S_OK;
+        }
     }
 
     return E_INVALIDARG;
 }
 
 bool CSecureFolderShellExt::CheckIfEncrypted(const std::wstring& path) {
-    // Check if folder has lock file (new logic: permission-based lock)
+    // Check if this is a SecureFolder package file (new format: .securefolder file)
+    if (SecureFolder::Utils::IsSecureFolderPackage(path)) {
+        return true;
+    }
+
+    // Check if folder has lock file (legacy format)
     std::wstring lockFilePath = path + L"\\" + SecureFolder::LOCK_FILE_NAME;
 
-    // First check if lock file exists (accessible case)
     if (SecureFolder::Utils::FileExists(lockFilePath)) {
         return true;
     }
@@ -211,7 +238,6 @@ bool CSecureFolderShellExt::CheckIfEncrypted(const std::wstring& path) {
                                    nullptr, OPEN_EXISTING,
                                    FILE_FLAG_BACKUP_SEMANTICS, nullptr);
         if (hTest == INVALID_HANDLE_VALUE) {
-            // Cannot access - likely locked by us
             return true;
         }
         CloseHandle(hTest);
@@ -300,6 +326,20 @@ STDAPI DllRegisterServer() {
         RegCloseKey(hKey);
     }
 
+    // Register for .securefolder package files (new format)
+    if (RegCreateKeyExW(HKEY_CLASSES_ROOT, L"SecureFolder.LockedFolder\\shellex\\ContextMenuHandlers\\SecureFolder", 0, nullptr, 0, KEY_WRITE, nullptr, &hKey, nullptr) == ERROR_SUCCESS) {
+        wchar_t szClsid[64] = {0};
+        wsprintfW(szClsid, L"{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+                  CLSID_SecureFolderShellExt.Data1, CLSID_SecureFolderShellExt.Data2,
+                  CLSID_SecureFolderShellExt.Data3,
+                  CLSID_SecureFolderShellExt.Data4[0], CLSID_SecureFolderShellExt.Data4[1],
+                  CLSID_SecureFolderShellExt.Data4[2], CLSID_SecureFolderShellExt.Data4[3],
+                  CLSID_SecureFolderShellExt.Data4[4], CLSID_SecureFolderShellExt.Data4[5],
+                  CLSID_SecureFolderShellExt.Data4[6], CLSID_SecureFolderShellExt.Data4[7]);
+        RegSetValueExW(hKey, nullptr, 0, REG_SZ, (BYTE*)szClsid, sizeof(wchar_t) * wcslen(szClsid));
+        RegCloseKey(hKey);
+    }
+
     MessageBoxW(nullptr, L"Shell extension registered!\nRight-click encrypted folder to see unlock options.", L"Success", MB_ICONINFORMATION);
 
     return S_OK;
@@ -320,6 +360,7 @@ STDAPI DllUnregisterServer() {
 
     RegDeleteTreeW(HKEY_CLASSES_ROOT, L"Folder\\shellex\\ContextMenuHandlers\\SecureFolder");
     RegDeleteTreeW(HKEY_CLASSES_ROOT, L"Directory\\shellex\\ContextMenuHandlers\\SecureFolder");
+    RegDeleteTreeW(HKEY_CLASSES_ROOT, L"SecureFolder.LockedFolder\\shellex\\ContextMenuHandlers\\SecureFolder");
 
     MessageBoxW(nullptr, L"Shell extension unregistered!", L"Success", MB_ICONINFORMATION);
 

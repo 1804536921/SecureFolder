@@ -14,6 +14,7 @@
 安装后功能：
 - ✅ **双击 .securefolder 文件** → 弹出密码输入窗口解锁
 - ✅ **右键任意文件夹** → 显示"Lock with SecureFolder"选项
+- ✅ **右键加密文件** → 显示"Unlock with SecureFolder"选项
 - ✅ **桌面快捷方式** → 打开图形界面
 
 ---
@@ -26,15 +27,15 @@ SecureFolder 采用类似压缩包的设计理念：
 
 ```
 加密前：D:\Secret\           (普通文件夹)
-加密后：D:\Secret.securefolder\  (加密文件夹，可见)
+加密后：D:\Secret.securefolder (单个加密文件包)
 
 双击 D:\Secret.securefolder → 弹出密码对话框 → 解密 → 恢复为 D:\Secret\
 ```
 
 **特点：**
-- 加密文件夹**可见**，不隐藏
-- 通过 `.securefolder` 后缀标识加密状态
-- 双击触发密码验证（类似双击 .zip 打开压缩包）
+- 加密后是**真正的文件**（不是文件夹），确保双击能正确触发密码框
+- 通过 `.securefolder` 扩展名标识加密状态
+- Windows 注册表文件关联正确工作
 - 解密后自动恢复原始文件夹名称
 
 ### 2.2 文件加密方式
@@ -42,10 +43,11 @@ SecureFolder 采用类似压缩包的设计理念：
 内部文件采用 AES-256-GCM 加密：
 
 ```
-加密前：filename.xlsx
-加密后：filename.xlsx.encf  (AES-256-GCM 加密文件)
+加密流程：
+文件夹 → 遍历所有文件 → 分块加密 → 打包成单文件 → 安全擦除原文件
 
-解密时：filename.xlsx.encf → filename.xlsx (恢复原文件)
+解密流程：
+读取包文件 → 验证密码 → 解密索引 → 逐文件解密 → 恢复文件夹结构
 ```
 
 ---
@@ -63,33 +65,39 @@ SecureFolder 采用类似压缩包的设计理念：
 ### 3.2 加密文件夹（GUI）
 
 ```
-步骤1：点击"浏览..."选择文件夹
-步骤2：输入加密密码（两次确认）
-步骤3：选择加密模式：
+步骤1：点击"浏览..."按钮
+步骤2：弹出选择对话框：
+       - 选择 [Yes] → 选择文件夹进行加密
+       - 选择 [No] → 选择 .securefolder 文件进行解密
+步骤3：选择要加密的文件夹
+步骤4：输入加密密码（两次确认）
+步骤5：选择加密模式：
        ○ 快速伪装 (秒级完成，仅CLSID)
-       ● 完整加密 (AES加密+后缀标识) ← 推荐
+       ● 完整加密 (AES加密+单文件打包) ← 推荐
        ○ 仅加密 (仅AES加密文件)
-步骤4：点击"加密锁定"
-步骤5：等待进度条完成
+步骤6：点击"加密锁定"
+步骤7：等待进度条完成
 ```
 
 加密完成后：
-- 文件夹名称变为 `原名称.securefolder`
-- 内部文件变为 `.encf` 加密格式
-- 双击该文件夹会弹出密码对话框
+- 生成 `原名称.securefolder` **文件**
+- 原文件夹被安全擦除
+- 双击该文件会弹出密码对话框
 
 ### 3.3 解密文件夹（GUI）
 
 ```
-步骤1：选择加密文件夹（.securefolder 后缀）
-步骤2：输入密码
-步骤3：点击"解密解锁"
-步骤4：等待进度条完成
+步骤1：点击"浏览..."按钮
+步骤2：选择 [No] → 选择 .securefolder 文件
+步骤3：选择加密文件
+步骤4：输入密码
+步骤5：点击"解密解锁"
+步骤6：等待进度条完成
 ```
 
 解密完成后：
-- 文件夹恢复原始名称
-- 内部文件恢复原始格式
+- 恢复原始文件夹
+- 所有文件恢复原始格式
 - 可正常访问所有文件
 
 ---
@@ -101,41 +109,44 @@ SecureFolder 采用类似压缩包的设计理念：
 ```
 1. 在资源管理器中右键点击任意文件夹
 2. 选择 "Lock with SecureFolder"
-3. 程序弹出密码输入窗口
+3. 程序弹出密码输入窗口（含确认密码）
 4. 输入密码完成加密
+5. 生成 .securefolder 文件
 ```
 
-### 4.2 解密文件夹
+### 4.2 解密文件
 
 ```
-1. 右键点击 .securefolder 文件夹
-2. 选择 "Unlock with SecureFolder"
-3. 输入密码完成解锁
-4. 解锁成功后自动打开文件夹
+1. 右键点击 .securefolder 文件
+2. 选择 "Unlock with SecureFolder" 或 "Unlock and Open Folder"
+3. 输入密码
+4. 解密成功后：
+   - "Unlock": 仅解密
+   - "Unlock and Open": 解密并自动打开文件夹
 ```
 
 ---
 
 ## 五、双击解锁功能
 
-### 5.1 双击加密文件夹
+### 5.1 双击加密文件
 
-安装后，双击 `.securefolder` 文件夹会触发密码验证：
+安装后，双击 `.securefolder` 文件会触发密码验证：
 
 ```
 双击 D:\Secret.securefolder →
 
 ┌─────────────────────────────────────┐
-│  SecureFolder - 解锁文件夹          │
+│  SecureFolder - Unlock Folder       │
 ├─────────────────────────────────────┤
-│  加密文件夹: D:\Secret.securefolder │
+│  Encrypted: D:\Secret.securefolder  │
 │                                     │
-│  请输入密码: [**********]           │
+│  Password: [**********]             │
 │                                     │
-│  [解锁]  [取消]                     │
+│  [Unlock]  [Unlock & Open]  [Cancel]│
 │                                     │
-│  提示: 输入正确密码后，文件夹将     │
-│  自动解锁并恢复原状。               │
+│  Tip: Enter correct password to     │
+│  unlock and restore folder.         │
 └─────────────────────────────────────┘
 
 密码正确 → 解密 → 自动打开 D:\Secret\
@@ -151,13 +162,13 @@ SecureFolder 采用类似压缩包的设计理念：
 # 加密文件夹
 SecureFolder.exe lock "D:\Secret"
 
-# 解密文件夹
+# 解密文件
 SecureFolder.exe unlock "D:\Secret.securefolder"
 
-# 查看文件夹状态
+# 查看文件状态
 SecureFolder.exe status "D:\Secret.securefolder"
 
-# 扫描已加密文件夹
+# 扫描已加密文件
 SecureFolder.exe scan "D:\"
 
 # 打开GUI
@@ -191,11 +202,11 @@ SecureFolder.exe lock "D:\Secret" -n
 
 | 模式 | 说明 | 安全性 | 速度 |
 |------|------|--------|------|
-| **完整加密 (FullEncrypt)** | AES加密文件 + .securefolder后缀 | 最高 | 较慢 |
+| **完整加密 (FullEncrypt)** | AES加密文件 + 打包成单文件 | 最高 | 较慢 |
 | **快速伪装 (QuickLock)** | 仅CLSID伪装 | 较低 | 极快 |
-| **仅加密 (CryptoOnly)** | 仅AES加密文件，不伪装 | 高 | 较慢 |
+| **仅加密 (CryptoOnly)** | 仅AES加密文件，不打包 | 高 | 较慢 |
 
-**推荐使用"完整加密"模式，兼顾安全性和易用性。**
+**推荐使用"完整加密"模式，提供最高安全性和正确的双击解锁体验。**
 
 ---
 
@@ -248,7 +259,7 @@ build.bat
 
 编译输出：
 ```
-build\Release\SecureFolder.exe      ← 主程序
+build\Release\SecureFolder.exe       ← 主程序
 build\Release\SecureFolderShellExt.dll ← Shell扩展
 ```
 
@@ -256,13 +267,14 @@ build\Release\SecureFolderShellExt.dll ← Shell扩展
 
 ## 十、常见问题
 
-### Q1: 双击加密文件夹没有弹出密码窗口？
+### Q1: 双击加密文件没有弹出密码窗口？
 
 ```
 解决：
 1. 确认已以管理员身份运行 install.bat
 2. 重启资源管理器（或重启电脑）
 3. 检查 .securefolder 文件类型是否已注册
+4. 确认加密文件是真正的文件（不是文件夹）
 ```
 
 ### Q2: 右键菜单没有加密选项？
@@ -271,6 +283,8 @@ build\Release\SecureFolderShellExt.dll ← Shell扩展
 解决：
 1. 以管理员身份运行 install.bat
 2. 重启资源管理器
+3. 对于加密文件，右键应显示 "Unlock" 选项
+4. 对于普通文件夹，右键应显示 "Lock" 选项
 ```
 
 ### Q3: 密码忘记了怎么办？
@@ -280,23 +294,27 @@ build\Release\SecureFolderShellExt.dll ← Shell扩展
 建议：记住密码，或备份加密前的原始文件
 ```
 
-### Q4: 加密后文件夹是什么样的？
+### Q4: 加密后的文件是什么样的？
 
 ```
-加密文件夹特征：
-- 名称带有 .securefolder 后缀（如 Secret.securefolder）
-- 文件夹可见，不隐藏
-- 内部文件为 .encf 加密格式
+加密文件特征：
+- 生成 .securefolder 文件（真正的文件，类似 .zip）
+- 文件可见，不隐藏
 - 双击会弹出密码验证窗口
+- 右键显示解密选项
 ```
 
-### Q5: 解密失败显示"File not found"？
+### Q5: 解密失败显示"Decryption error"？
 
 ```
 可能原因：
-- 旧的加密文件夹可能有格式不兼容问题
-- 尝试删除旧加密文件夹，重新加密测试
-- 确保密码正确
+- 密码不正确
+- 文件损坏
+- 版本不兼容
+
+解决：
+- 确认密码正确
+- 重新加密测试
 ```
 
 ---
@@ -305,7 +323,7 @@ build\Release\SecureFolderShellExt.dll ← Shell扩展
 
 ### 加密流程
 ```
-用户密码 → PBKDF2-HMAC-SHA256 → AES-256密钥 → AES-GCM加密文件 → 重命名文件夹
+用户密码 → PBKDF2-HMAC-SHA256 → AES-256密钥 → AES-GCM加密 → 打包成单文件
 ```
 
 ### 密钥派生参数
@@ -316,22 +334,21 @@ build\Release\SecureFolderShellExt.dll ← Shell扩展
 密钥长度: 256位（AES-256）
 ```
 
-### 文件加密格式
+### 文件格式
 ```
 ┌─────────────────────────────────────────┐
-│  文件头 (28 bytes)                       │
-│  Magic: "ENCF" (4 bytes)                 │
+│  SecurePackageHeader                     │
+│  Magic: "SFPK" (4 bytes)                 │
 │  Version: 1 (4 bytes)                    │
-│  Flags: 0 (4 bytes)                      │
-│  OriginalSize: 原始文件大小 (8 bytes)    │
-│  OriginalNameLen: 原始文件名长度 (4 bytes)│
-│  OriginalName: 原始文件名 (UTF-8)         │
+│  OriginalFolderName (UTF-8)              │
+│  Salt (32 bytes)                         │
+│  PasswordVerifyHash (32 bytes)           │
+│  EncryptedIndex                          │
 ├─────────────────────────────────────────┤
-│  IV: 12 bytes (GCM推荐长度)              │
-├─────────────────────────────────────────┤
-│  密文                                    │
-├─────────────────────────────────────────┤
-│  AuthTag: 16 bytes                       │
+│  FileEntry (per file)                    │
+│  PathLen + Path                          │
+│  OriginalSize (8 bytes)                  │
+│  [Chunk: IV + Cipher + Tag] (repeated)   │
 └─────────────────────────────────────────┘
 ```
 
@@ -345,12 +362,12 @@ build\Release\SecureFolderShellExt.dll ← Shell扩展
 ## 十二、安全建议
 
 1. **密码强度**：至少8位，包含大小写字母、数字和符号
-2. **密码备份**：牢记密码，密码丢失无法恢复文件
+2. **密码备份**：牢记密码，丢失无法恢复
 3. **重要文件**：加密前建议保留一份备份
-4. **共享文件**：不要将密码与加密文件夹一起存储
+4. **共享文件**：不要将密码与加密文件一起存储
 
 ---
 
-*文档版本: v3.0*
+*文档版本: v4.0*
 *适用版本: SecureFolder 1.0.0*
 *更新日期: 2026年5月6日*

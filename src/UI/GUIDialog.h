@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Windows.h>
+#include <commdlg.h>
 #include <string>
 #include <vector>
 #include "Core/SecureFolderManager.h"
@@ -11,7 +12,8 @@ namespace SecureFolder {
 class PasswordDialog {
 public:
     // Show password input dialog for unlock
-    static bool Show(HWND parent, const std::wstring& folderPath, std::wstring& outPassword);
+    // openAfterUnlock: set to true if user clicked "Unlock and Open"
+    static bool Show(HWND parent, const std::wstring& folderPath, std::wstring& outPassword, bool& openAfterUnlock);
 
     // Show password input dialog for lock (with confirm password)
     static bool ShowForLock(HWND parent, const std::wstring& folderPath, std::wstring& outPassword);
@@ -75,7 +77,8 @@ private:
 void InitGUI(HINSTANCE hInstance);
 
 // Show password input dialog (for Shell extension - unlock)
-bool RequestPassword(const std::wstring& folderPath, std::wstring& password);
+// openAfterUnlock: set to true if user wants to open folder after unlock
+bool RequestPassword(const std::wstring& folderPath, std::wstring& password, bool& openAfterUnlock);
 
 // Show password input dialog for lock (with confirm)
 bool RequestPasswordForLock(const std::wstring& folderPath, std::wstring& password);

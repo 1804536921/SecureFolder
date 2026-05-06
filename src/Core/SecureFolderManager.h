@@ -79,7 +79,10 @@ private:
                            SecurePackageHeader& header,
                            std::vector<uint8_t>& salt,
                            std::vector<uint8_t>& verifyHash,
-                           std::wstring& originalFolderName);
+                           std::wstring& originalFolderName,
+                           std::vector<uint8_t>& indexIV,
+                           std::vector<uint8_t>& indexCipher,
+                           std::vector<uint8_t>& indexTag);
 
     bool BuildEncryptedIndex(const std::vector<FileInfo>& files,
                              const std::vector<uint8_t>& key,
@@ -121,6 +124,11 @@ private:
 
     // Check if path is legacy locked folder (old format)
     bool IsLegacyLockedFolder(const std::wstring& path);
+
+    // Legacy unlock method (backward compatibility)
+    Result UnlockFolderLegacy(const std::wstring& folderPath,
+                              const std::wstring& password,
+                              IProgressCallback* callback);
 };
 
 } // namespace SecureFolder

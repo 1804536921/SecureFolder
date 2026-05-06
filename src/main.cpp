@@ -302,27 +302,35 @@ int CmdLockGUI(const std::wstring& folderPath) {
     }
 }
 
-// Helper: Find the actual locked folder path
+// Helper: Find the actual locked folder/package path
 std::wstring FindLockedFolder(const std::wstring& inputPath) {
     std::wstring cleanPath = CleanPath(inputPath);
 
-    // If path already has .securefolder suffix, use it directly
+    // Check if input is a package file (new format)
+    if (Utils::IsSecureFolderPackage(cleanPath)) {
+        return cleanPath;
+    }
+
+    // Check if .securefolder package file exists for this folder name
+    std::wstring packagePath = cleanPath + PACKAGE_FILE_EXTENSION;
+    if (Utils::IsSecureFolderPackage(packagePath)) {
+        return packagePath;
+    }
+
+    // Check if path already has .securefolder suffix (legacy format: folder)
     if (cleanPath.find(LOCKED_FOLDER_SUFFIX) != std::wstring::npos) {
-        if (Utils::FolderExists(cleanPath)) {
+        DWORD attr = GetFileAttributesW(cleanPath.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+            // It's a folder with .securefolder suffix (legacy format)
             return cleanPath;
         }
     }
 
-    // Check if .securefolder version exists
+    // Check if .securefolder version exists as folder (legacy format)
     std::wstring lockedPath = cleanPath + LOCKED_FOLDER_SUFFIX;
-    if (Utils::FolderExists(lockedPath)) {
+    DWORD attr = GetFileAttributesW(lockedPath.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
         return lockedPath;
-    }
-
-    // Check if original path has lock file (backward compatibility)
-    std::wstring lockFile = cleanPath + L"\\" + LOCK_FILE_NAME;
-    if (Utils::FileExists(lockFile)) {
-        return cleanPath;
     }
 
     // Not found
@@ -348,7 +356,8 @@ int CmdUnlockGUI(const std::wstring& folderPath) {
     }
 
     std::wstring password;
-    if (!RequestPassword(lockedPath, password)) {
+    bool openAfterUnlock = false;
+    if (!RequestPassword(lockedPath, password, openAfterUnlock)) {
         return 1;  // User cancelled
     }
 
@@ -357,13 +366,11 @@ int CmdUnlockGUI(const std::wstring& folderPath) {
 
     if (result.success) {
         MessageBoxW(nullptr, result.message.c_str(), L"Success", MB_ICONINFORMATION);
-        // Optionally open the unlocked folder
-        std::wstring openPath = lockedPath;
-        size_t pos = openPath.find(LOCKED_FOLDER_SUFFIX);
-        if (pos != std::wstring::npos) {
-            openPath = openPath.substr(0, pos);  // Use restored name
+        if (openAfterUnlock) {
+            // User clicked "Unlock and Open" - open the folder
+            std::wstring openPath = Utils::ExtractOriginalName(lockedPath);
+            ShellExecuteW(nullptr, L"open", openPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
-        ShellExecuteW(nullptr, L"open", openPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         return 0;
     } else {
         MessageBoxW(nullptr, result.message.c_str(), L"Error", MB_ICONERROR);
@@ -388,7 +395,8 @@ int CmdOpenFolder(const std::wstring& folderPath) {
     if (status.isLocked) {
         // Folder is locked - show password dialog
         std::wstring password;
-        if (!RequestPassword(cleanPath, password)) {
+        bool openAfterUnlock = false;
+        if (!RequestPassword(cleanPath, password, openAfterUnlock)) {
             // User cancelled - don't open folder
             return 1;
         }
@@ -397,8 +405,11 @@ int CmdOpenFolder(const std::wstring& folderPath) {
         Result result = manager.UnlockFolder(cleanPath, password, nullptr);
 
         if (result.success) {
-            // Unlock successful - open folder
-            ShellExecuteW(nullptr, L"open", cleanPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            // Unlock successful - open folder if requested
+            if (openAfterUnlock) {
+                std::wstring openPath = Utils::ExtractOriginalName(cleanPath);
+                ShellExecuteW(nullptr, L"open", openPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }
             return 0;
         } else {
             // Wrong password or error
